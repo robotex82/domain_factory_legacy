@@ -88,9 +88,10 @@ end
 
 inject_into_file 'config.ru', :before => "require ::File.expand_path('../config/environment',  __FILE__)" do
 <<-RUBY.gsub(/^ {2}/, '')
-
-  GEM_HOME = '/kunden/#{domainfactory_customer_number}/.gem'
-  GEM_PATH = '/kunden/#{domainfactory_customer_number}/.gem:/usr/lib/ruby/gems/1.8'
+if (File.dirname(__FILE__).include?('staging') || File.dirname(__FILE__).include?('production'))
+  GEM_HOME = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem'
+  GEM_PATH = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem:/usr/lib/ruby/gems/1.8'
+end  
 RUBY
 end
 
@@ -144,10 +145,10 @@ namespace :deploy do
 end
 
 namespace :bundle do
-  desc "Install bundle to ~/.gem without development and test"
+  desc "Install bundle without development and test"
   task :install, :roles => :app do
     run <<-CMD
-      cd \#{current_path}; bundle install --path=~/.gem --without development test
+      cd \#{current_path}; bundle install --path=/kunden/#{domainfactory_customer_number}/#{application_name}/.gem --without development test
     CMD
   end
   
