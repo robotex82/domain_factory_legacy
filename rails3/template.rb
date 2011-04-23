@@ -128,7 +128,8 @@ set :use_sudo, false        # Don't use sudo
 # /kunden/xxxxxx_xxxxx/foo_app
 set :deploy_to, "/kunden/#{domainfactory_customer_number}/#{application_name}/production"
 
-after "deploy:symlink", "#{deploy_to}"
+after "deploy:symlink", "bundle:symlink"
+after "deploy:setup", "bundle:configure"
 
 # If you are using Passenger mod_rails uncomment this:
 # if you're still using the script/reapear helper you will need
@@ -145,31 +146,42 @@ namespace :deploy do
 end
 
 namespace :bundle do
+  desc "Creates and initial bundle configuration"
+  task :configure, :roles => :app do
+    run <<-CMD
+      cd \#{shared_path};
+      mkdir ./.bundle;
+      cd ./.bundle;
+      touch config;
+      echo "---" >> config;
+      echo "BUNDLE_WITHOUT: development:test" >> config;
+      echo "BUNDLE_PATH: /kunden/#{domainfactory_customer_number}/#{application_name}/.gem" >> config;
+    CMD
+  end
+  
   desc "Install bundle without development and test"
   task :install, :roles => :app do
     run <<-CMD
-      cd \#{current_path}; bundle install --path=/kunden/#{domainfactory_customer_number}/#{application_name}/.gem --without development test
+      cd \#{current_path}; 
+      bundle install --path=/kunden/#{domainfactory_customer_number}/#{application_name}/.gem --without development test
     CMD
   end
   
   desc "Symlinks your machine specific bundle to your rails app"
   task :symlink, :roles => :app do
     run <<-CMD
-      mkdir \#{shared_path}/.bundle
-      ln -nfs \#{shared_path}/.bundle \#{release_path}/.bundle
+      ln -nfs \#{shared_path}/.bundle \#{release_path}/.bundle;
     CMD
   end
 end
 
 namespace :domain_factory do
   desc "Symlinks the domain factory mysql gem to your gem path"
-  task :copy_mysql_gem, :roles => :app do
+  task :replace_mysql_gem, :roles => :app do
     run <<-CMD
-      mkdir /kunden/#{domainfactory_customer_number}/.gem/gems
-      cd /kunden/#{domainfactory_customer_number}/.gem/gems
-      rm -rf ./mysql-2.7
-      
-      ln -nfs /usr/lib/ruby/gems/1.8/gems/mysql-2.7 /kunden/#{domainfactory_customer_number}/.gem/gems/mysql-2.7
+      cd /kunden/#{domainfactory_customer_number}/#{application_name}/.gem/ruby/1.8/gems;
+      mv ./mysql-2.7 ./mysql-2.7-original;
+      ln -nfs /usr/lib/ruby/gems/1.8/gems/mysql-2.7 ./mysql-2.7;
     CMD
   end
 end
@@ -179,6 +191,8 @@ FILE
 ################################################################################
 # Database configuration
 ################################################################################
+
+gsub_file "Gemfile", /gem \'mysql2\'/, "# gem 'mysql2'"
 
 remove_file 'config/database.yml'
 file 'config/database.yml', <<-FILE
@@ -211,6 +225,10 @@ production:
   socket: /var/run/mysqld/mysqld.sock
 FILE
 
+say "################################################################################"
+say "# Setting up git and pushing your application to the git repository"
+say "################################################################################"
+
 ################################################################################
 # Initialize git repo and add github master
 ################################################################################
@@ -225,6 +243,29 @@ git :remote => "add origin #{repository}"
 ################################################################################
 git :push => "-u origin master"
 
+say "################################################################################"
+say "# Deploying"
+say "################################################################################"
+
 ################################################################################
 # Run capistrano
 ################################################################################
+run "cap deploy:setup"
+run "cap deploy:update"
+run "cap bundle:install"
+run "cap domain_factory:replace_mysql_gem"
+run "cap deploy:migrate"
+run "cap deploy:restart"
+
+say "################################################################################"
+say "# Done"
+say "################################################################################"
+say ""
+say "Next steps:"
+say "  * go to http://admin.df.eu and login to your account"
+say "  * create a new subdomain (i.e. #{application_name}.#{domain})"
+say "  * set the target to /#{application_name}/production/current/public"
+say "  * activate rails support and set the path to '/'"
+say ""
+say "Your application should be fully deployed!"
+say "Go, open http://#{application_name}.#{domain}/ in your browser!"
