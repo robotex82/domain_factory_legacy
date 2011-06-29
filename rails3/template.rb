@@ -83,15 +83,26 @@ RUBY
 end
 
 ################################################################################
-# config.ru for domain factory
+# config.ru and config/boot.rb for domain factory
 ################################################################################
 
 inject_into_file 'config.ru', :before => "require ::File.expand_path('../config/environment',  __FILE__)" do
 <<-RUBY.gsub(/^ {2}/, '')
-if (File.dirname(__FILE__).include?('staging') || File.dirname(__FILE__).include?('production'))
-  GEM_HOME = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem'
-  GEM_PATH = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem:/usr/lib/ruby/gems/1.8'
-end  
+  if (File.dirname(__FILE__).include?('staging') || File.dirname(__FILE__).include?('production'))
+    GEM_HOME = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem'
+    GEM_PATH = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem:/usr/lib/ruby/gems/1.8'
+  end  
+  
+RUBY
+end
+
+inject_into_file 'config/boot.rb', :before => "require 'rubygems'" do
+<<-RUBY.gsub(/^ {2}/, '')
+  if (File.dirname(__FILE__).include?('staging') || File.dirname(__FILE__).include?('production'))
+    GEM_HOME = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem'
+    GEM_PATH = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem:/usr/lib/ruby/gems/1.8'
+  end  
+  
 RUBY
 end
 
@@ -167,6 +178,14 @@ namespace :bundle do
     CMD
   end
   
+  desc "Update bundle"
+  task :update, :roles => :app do
+    run <<-CMD
+      cd \#{current_path}; 
+      bundle update
+    CMD
+  end
+  
   desc "Symlinks your machine specific bundle to your rails app"
   task :symlink, :roles => :app do
     run <<-CMD
@@ -226,6 +245,11 @@ production:
 FILE
 
 say "################################################################################"
+say "# Installing your bundle"
+say "################################################################################"
+run "bundle install --without staging production"
+
+say "################################################################################"
 say "# Setting up git and pushing your application to the git repository"
 say "################################################################################"
 
@@ -258,7 +282,7 @@ run "cap deploy:migrate"
 run "cap deploy:restart"
 
 say "################################################################################"
-say "# Done"
+say "# Finishing the configuration"
 say "################################################################################"
 say ""
 say "Next steps:"
@@ -269,3 +293,15 @@ say "  * activate rails support and set the path to '/'"
 say ""
 say "Your application should be fully deployed!"
 say "Go, open http://#{application_name}.#{domain}/ in your browser!"
+say ""
+say "################################################################################"
+say "# Developing"
+say "################################################################################"
+say ""
+say "After each development cycle, you have to add your changes to git, commit, push"
+say "and deploy:"
+say ""
+say "  $> git add ."
+say "  $> git commit"
+say "  $> git push"
+say "  $> cap deploy"
