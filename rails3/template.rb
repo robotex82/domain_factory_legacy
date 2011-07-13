@@ -154,6 +154,14 @@ namespace :deploy do
   task :restart, :roles => :app, :except => { :no_release => true } do
     run "\#{try_sudo} touch \#{current_path}/tmp/restart.txt"
   end
+  
+  desc "Run database migrations"
+  task :migrate, :roles => :app do
+    run <<-CMD
+      cd \#{current_path}; 
+      bundle exec rake RAILS_ENV=production db:migrate
+    CMD
+  end  
 end
 
 namespace :bundle do
