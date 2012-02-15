@@ -2,70 +2,32 @@ say "###########################################################################
 say "# Checking prerequisites"
 say "################################################################################"
 
-say "Checking for the capistrano gem..."
-begin
-  gem 'capistrano'
-rescue GEM::LoadError
-  if yes?('Capistrano is currenty not installed. Install Capistrano on your local system? (yes/no)')
-    run "sudo gem install capistrano" 
-  else
-    exit
-  end    
+%w(capistrano).each do |gem_name|
+  say "Checking for the #{gem_name} gem..."
+  begin
+    gem gem_name
+  rescue GEM::LoadError
+    if yes?("#{gem_name} is currenty not installed. Install ? (yes/no)")
+      run "gem install #{gem_name}" 
+      gem gem_name
+    else
+      exit
+    end    
+  end
 end
 
-say "[ok]"
 
-say "################################################################################"
-say "# Tell me about your configuration"
-say "################################################################################"
+config_file = ask("Where is your config file?")
 
-say "DomainFactory"
-say "============="
-domainfactory_customer_number = ask("Enter your customer number (i.e.: 123456_12345):")
+require 'yaml' 
+configuration = ::YAML.load(File.read(File.expand_path("../#{config_file}")))
 
-say "SSH"
-say "==="
-domain       = ask("Enter the domain name to connect to your webspace via ssh (i.e.: example.com):")
-ssh_username = ask("Enter your ssh username (i.e.: ssh-123456-ssh): ")
-ssh_password = ask("Enter your ssh password (i.e.: ssh_foobar): ")
-
-say "Database"
-say "========"
-database    = ask("Enter your mysql database name (i.e.: db123456_1): ")
-db_username = ask("Enter the database username (i.e.: db123456_1): ")
-db_password = ask("Enter the database password (i.e.: db_foobar): ")
-
-say "GitHub"
-say "======"
-repository = ask("Enter the github repository address (i.e.: git@github.com:johndoe/example_application.git): ")
-
-say "Application"
-say "==========="
-application_name = ask("Enter your application name (i.e.: example_application):")
-
-
-say "################################################################################"
-say "# Configuring your application"
-say "################################################################################"
-
-################################################################################
-# Configure .gitignore
-################################################################################
-remove_file '.gitignore'
-file '.gitignore', <<-CODE.gsub(/^ {2}/, '')
-  .bundle
-  db/*.sqlite3
-  log/*.log
-  tmp/**/*
-  *~
-  webrat.log
-CODE
 
 ################################################################################
 # Gemfile for domain factory
 ################################################################################
 
-inject_into_file 'Gemfile', :after => "# end"  do
+append_file 'Gemfile'  do
 <<-RUBY.gsub(/^ {2}/, '')
 
   group :staging, :production do
@@ -78,6 +40,7 @@ inject_into_file 'Gemfile', :after => "# end"  do
   
   group :development do
     gem 'capistrano'
+    gem 'capistrano-ext'
   end    
 RUBY
 end
@@ -88,19 +51,44 @@ end
 
 inject_into_file 'config.ru', :before => "require ::File.expand_path('../config/environment',  __FILE__)" do
 <<-RUBY.gsub(/^ {2}/, '')
-  if (File.dirname(__FILE__).include?('staging') || File.dirname(__FILE__).include?('production'))
-    GEM_HOME = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem'
-    GEM_PATH = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem:/usr/lib/ruby/gems/1.8'
+  if (File.dirname(__FILE__).include?('staging'))
+    GEM_HOME = '/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/staging/.gem'
+    GEM_PATH = '/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/staging/.gem:/usr/lib/ruby/gems/1.8'
   end  
-  
+
+  if (File.dirname(__FILE__).include?('production'))
+    GEM_HOME = '/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/production/.gem'
+    GEM_PATH = '/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/production/.gem:/usr/lib/ruby/gems/1.8'
+  end 
+   
 RUBY
 end
 
 inject_into_file 'config/boot.rb', :before => "require 'rubygems'" do
 <<-RUBY.gsub(/^ {2}/, '')
-  if (File.dirname(__FILE__).include?('staging') || File.dirname(__FILE__).include?('production'))
-    GEM_HOME = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem'
-    GEM_PATH = '/kunden/#{domainfactory_customer_number}/#{application_name}/.gem:/usr/lib/ruby/gems/1.8'
+  if (File.dirname(__FILE__).include?('staging'))
+    GEM_HOME = '/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/staging/.gem'
+    GEM_PATH = '/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/staging/.gem:/usr/lib/ruby/gems/1.8'
+  end  
+
+  if (File.dirname(__FILE__).include?('production'))
+    GEM_HOME = '/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/production/.gem'
+    GEM_PATH = '/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/production/.gem:/usr/lib/ruby/gems/1.8'
+  end  
+  
+RUBY
+end
+
+################################################################################
+# staging environment
+################################################################################
+copy_file File.join(destination_root, 'config/environments/production.rb'), 'config/environments/staging.rb'
+
+inject_into_file 'config/application.rb', :after => "require 'rails/all'" do
+<<-RUBY.gsub(/^ {2}/, '')
+
+  if (File.dirname(__FILE__).include?('staging'))
+    Rails.env = ActiveSupport::StringInquirer.new('staging')
   end  
   
 RUBY
@@ -111,36 +99,121 @@ end
 ################################################################################
 capify!
 
-deploy_to        = "/kunden/#{domainfactory_customer_number}/#{application_name}/production"
-
 remove_file 'config/deploy.rb'
 file 'config/deploy.rb', <<-FILE
-set :application, "#{application_name}"
+set :stages, %w(production staging)
+set :default_stage, "staging"
+require 'capistrano/ext/multistage'
+
+set :application, "#{configuration['application']['name']}"
+
+set :scm, :#{configuration['deployment']['scm']['type']}
+set :repository, "#{configuration['deployment']['scm']['repository']}"
+set :deploy_via, :remote_cache
 
 default_run_options[:pty]   = true  # Must be set for the password prompt from git to work
 ssh_options[:forward_agent] = true  # Use local ssh keys
-set :repository,  "#{repository}"
-set :branch, "master"
-set :deploy_via, :remote_cache
 
+after "deploy:symlink", "bundle:symlink"
+after "deploy:setup", "bundle:configure"
+FILE
 
-set :scm, :git
-# Or: `accurev`, `bzr`, `cvs`, `darcs`, `git`, `mercurial`, `perforce`, `subversion` or `none`
+empty_directory "config/deploy"
 
-role :web, "#{domain}"                   # Your HTTP server, Apache/etc
-role :app, "#{domain}"                   # This may be the same as your `Web` server
-role :db,  "#{domain}", :primary => true # This is where Rails migrations will run
+file 'config/deploy/staging.rb', <<-FILE
+set :branch, "#{configuration['environments']['staging']['github']['branch']}"
 
-set :user,     "#{ssh_username}" # DomainFactory SSH User: ssh-xxxxxx-???
-set :password, "#{ssh_password}" # DomainFactory SSH Password
+role :web, "#{configuration['deployment']['ssh']['domain']}"                   # Your HTTP server, Apache/etc
+role :app, "#{configuration['deployment']['ssh']['domain']}"                   # This may be the same as your `Web` server
+role :db,  "#{configuration['deployment']['ssh']['domain']}", :primary => true # This is where Rails migrations will run
+
+set :user,     "#{configuration['deployment']['ssh']['username']}" # DomainFactory SSH User: ssh-xxxxxx-???
+set :password, "#{configuration['deployment']['ssh']['password']}" # DomainFactory SSH Password
 set :use_sudo, false        # Don't use sudo
 
 # Deployment path on DomainFactory:
 # /kunden/xxxxxx_xxxxx/foo_app
-set :deploy_to, "/kunden/#{domainfactory_customer_number}/#{application_name}/production"
+set :deploy_to, "/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/staging"
 
-after "deploy:symlink", "bundle:symlink"
-after "deploy:setup", "bundle:configure"
+
+
+# If you are using Passenger mod_rails uncomment this:
+# if you're still using the script/reapear helper you will need
+# these http://github.com/rails/irs_process_scripts
+
+namespace :deploy do
+  task :start do ; end
+  task :stop do ; end
+  
+  desc "Restart the server"
+  task :restart, :roles => :app, :except => { :no_release => true } do
+    run "\#{try_sudo} touch \#{current_path}/tmp/restart.txt"
+  end
+  
+  desc "Run database migrations"
+  task :migrate, :roles => :app do
+    run <<-CMD
+      cd \#{current_path}; 
+      bundle exec rake RAILS_ENV=staging db:migrate
+    CMD
+  end  
+end
+
+namespace :bundle do
+  desc "Creates and initial bundle configuration"
+  task :configure, :roles => :app do
+    run <<-CMD
+      cd \#{shared_path};
+      mkdir ./.bundle;
+      cd ./.bundle;
+      touch config;
+      echo "---" >> config;
+      echo "BUNDLE_WITHOUT: development:test" >> config;
+      echo "BUNDLE_PATH: /kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/staging/.gem" >> config;
+    CMD
+  end
+  
+  desc "Install bundle without development and test"
+  task :install, :roles => :app do
+    run <<-CMD
+      cd \#{current_path}; 
+      bundle install --path=/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/staging/.gem --without development test
+    CMD
+  end
+  
+  desc "Update bundle"
+  task :update, :roles => :app do
+    run <<-CMD
+      cd \#{current_path}; 
+      bundle
+    CMD
+  end
+  
+  desc "Symlinks your machine specific bundle to your rails app"
+  task :symlink, :roles => :app do
+    run <<-CMD
+      ln -nfs \#{shared_path}/.bundle \#{release_path}/.bundle;
+    CMD
+  end
+end
+FILE
+
+file 'config/deploy/production.rb', <<-FILE
+set :branch, "#{configuration['environments']['production']['github']['branch']}"
+
+role :web, "#{configuration['deployment']['ssh']['domain']}"                   # Your HTTP server, Apache/etc
+role :app, "#{configuration['deployment']['ssh']['domain']}"                   # This may be the same as your `Web` server
+role :db,  "#{configuration['deployment']['ssh']['domain']}", :primary => true # This is where Rails migrations will run
+
+set :user,     "#{configuration['deployment']['ssh']['username']}" # DomainFactory SSH User: ssh-xxxxxx-???
+set :password, "#{configuration['deployment']['ssh']['password']}" # DomainFactory SSH Password
+set :use_sudo, false        # Don't use sudo
+
+# Deployment path on DomainFactory:
+# /kunden/xxxxxx_xxxxx/foo_app
+set :deploy_to, "/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/production"
+
+
 
 # If you are using Passenger mod_rails uncomment this:
 # if you're still using the script/reapear helper you will need
@@ -174,7 +247,7 @@ namespace :bundle do
       touch config;
       echo "---" >> config;
       echo "BUNDLE_WITHOUT: development:test" >> config;
-      echo "BUNDLE_PATH: /kunden/#{domainfactory_customer_number}/#{application_name}/.gem" >> config;
+      echo "BUNDLE_PATH: /kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/production/.gem" >> config;
     CMD
   end
   
@@ -182,7 +255,7 @@ namespace :bundle do
   task :install, :roles => :app do
     run <<-CMD
       cd \#{current_path}; 
-      bundle install --path=/kunden/#{domainfactory_customer_number}/#{application_name}/.gem --without development test
+      bundle install --path=/kunden/#{configuration['domainfactory']['customer_number']}/#{configuration['application']['name']}/production/.gem --without development test
     CMD
   end
   
@@ -190,7 +263,7 @@ namespace :bundle do
   task :update, :roles => :app do
     run <<-CMD
       cd \#{current_path}; 
-      bundle update
+      bundle
     CMD
   end
   
@@ -201,18 +274,6 @@ namespace :bundle do
     CMD
   end
 end
-
-namespace :domain_factory do
-  desc "Symlinks the domain factory mysql gem to your gem path"
-  task :replace_mysql_gem, :roles => :app do
-    run <<-CMD
-      cd /kunden/#{domainfactory_customer_number}/#{application_name}/.gem/ruby/1.8/gems;
-      mv ./mysql-2.7 ./mysql-2.7-original;
-      ln -nfs /usr/lib/ruby/gems/1.8/gems/mysql-2.7 ./mysql-2.7;
-    CMD
-  end
-end
-
 FILE
 
 ################################################################################
@@ -239,16 +300,27 @@ test:
   database: db/test.sqlite3
   pool: 5
   timeout: 5000
+  
+staging:
+  adapter: mysql
+  host: #{configuration['environments']['staging']['database']['host']}
+  encoding: utf8
+  reconnect: false
+  database: #{configuration['environments']['staging']['database']['name']}
+  pool: 5
+  username: #{configuration['environments']['staging']['database']['username']}
+  password: #{configuration['environments']['staging']['database']['password']}
+  socket: /var/run/mysqld/mysqld.sock
 
 production:
   adapter: mysql
-  host: mysql5.#{domain}
+  host: #{configuration['environments']['production']['database']['host']}
   encoding: utf8
   reconnect: false
-  database: #{database}
+  database: #{configuration['environments']['production']['database']['name']}
   pool: 5
-  username: #{db_username}
-  password: #{db_password}
+  username: #{configuration['environments']['production']['database']['username']}
+  password: #{configuration['environments']['production']['database']['password']}
   socket: /var/run/mysqld/mysqld.sock
 FILE
 
@@ -267,7 +339,7 @@ say "###########################################################################
 git :init
 git :add => "."
 git :commit => "-aqm 'Initial commit.'"
-git :remote => "add origin #{repository}"
+git :remote => "add origin #{configuration['deployment']['scm']['repository']}"
 
 
 ################################################################################
@@ -282,34 +354,37 @@ say "###########################################################################
 ################################################################################
 # Run capistrano
 ################################################################################
-run "cap deploy:setup"
-run "cap deploy:update"
-run "cap bundle:install"
-run "cap domain_factory:replace_mysql_gem"
-run "cap deploy:migrate"
-run "cap deploy:restart"
+
+run "cap staging deploy:setup"
+run "cap staging deploy:update"
+run "cap staging bundle:install"
+run "cap staging deploy:migrate"
+run "cap staging deploy:restart"
+
+run "cap production deploy:setup"
+run "cap production deploy:update"
+run "cap production bundle:install"
+run "cap production deploy:migrate"
+run "cap production deploy:restart"
+
 
 say "################################################################################"
 say "# Finishing the configuration"
 say "################################################################################"
 say ""
-say "Next steps:"
+say "Next steps for staging:"
 say "  * go to http://admin.df.eu and login to your account"
-say "  * create a new subdomain (i.e. #{application_name}.#{domain})"
-say "  * set the target to /#{application_name}/production/current/public"
+say "  * create a new subdomain (i.e. staging.#{configuration['deployment']['ssh']['domain']})"
+say "  * set the target to /#{configuration['application']['name']}/staging/current/public"
+say "  * activate rails support and set the path to '/'"
+say ""
+say "Next steps for production:"
+say "  * go to http://admin.df.eu and login to your account"
+say "  * create a new subdomain (i.e. www.#{configuration['deployment']['ssh']['domain']})"
+say "  * set the target to /#{configuration['application']['name']}/production/current/public"
 say "  * activate rails support and set the path to '/'"
 say ""
 say "Your application should be fully deployed!"
-say "Go, open http://#{application_name}.#{domain}/ in your browser!"
-say ""
-say "################################################################################"
-say "# Developing"
-say "################################################################################"
-say ""
-say "After each development cycle, you have to add your changes to git, commit, push"
-say "and deploy:"
-say ""
-say "  $> git add ."
-say "  $> git commit"
-say "  $> git push"
-say "  $> cap deploy"
+say "Go, open http://staging.#{configuration['deployment']['ssh']['domain']}/ in your browser for production!"
+say "Go, open http://www.#{configuration['deployment']['ssh']['domain']}/ in your browser for production!"
+
