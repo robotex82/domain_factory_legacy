@@ -97,7 +97,7 @@ end
 ################################################################################
 # Capistrano configuration
 ################################################################################
-capify!
+run 'capify .'
 
 remove_file 'config/deploy.rb'
 file 'config/deploy.rb', <<-FILE
